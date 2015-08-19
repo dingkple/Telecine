@@ -1,3 +1,4 @@
 rootProject.name = 'telecine-project'
 
 include ':telecine'
+include ':libstreaming'
