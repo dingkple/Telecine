@@ -35,8 +35,6 @@ public final class TelecineService extends Service{
     private static final String EXTRA_DATA        = "data";
     private static final int    NOTIFICATION_ID   = 99118822;
     private static final String SHOW_TOUCHES      = "show_touches";
-    private SessionNew    mSession;
-    private RtspClientNew mClient;
 
     public static Intent newIntent(Context context, int resultCode, Intent data) {
         Intent intent = new Intent(context, TelecineService.class);

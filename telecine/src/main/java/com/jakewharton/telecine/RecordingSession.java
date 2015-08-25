@@ -1,50 +1,33 @@
 package com.jakewharton.telecine;
 
-import android.app.Notification;
 import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
-import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
-import android.graphics.Bitmap;
 import android.hardware.display.VirtualDisplay;
 import android.media.CamcorderProfile;
-import android.media.MediaMetadataRetriever;
 import android.media.MediaRecorder;
-import android.media.MediaScannerConnection;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
-import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.util.DisplayMetrics;
-import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.WindowManager;
 
 import com.google.android.gms.analytics.HitBuilders;
 
-import net.majorkernelpanic.streaming.Session;
 import net.majorkernelpanic.streaming.SessionBuilder;
 import net.majorkernelpanic.streaming.SessionBuilderNew;
 import net.majorkernelpanic.streaming.SessionNew;
-import net.majorkernelpanic.streaming.audio.AudioQuality;
 import net.majorkernelpanic.streaming.rtsp.RtspClientNew;
 import net.majorkernelpanic.streaming.video.RecordingInfo;
 
 import java.io.File;
-import java.io.IOException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.Locale;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -55,13 +38,7 @@ import timber.log.Timber;
 import static android.content.Context.MEDIA_PROJECTION_SERVICE;
 import static android.content.Context.NOTIFICATION_SERVICE;
 import static android.content.Context.WINDOW_SERVICE;
-import static android.content.Intent.ACTION_SEND;
-import static android.content.Intent.ACTION_VIEW;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-import static android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION;
-import static android.media.MediaRecorder.OutputFormat.MPEG_4;
-import static android.media.MediaRecorder.VideoEncoder.H264;
-import static android.media.MediaRecorder.VideoSource.SURFACE;
 import static android.os.Environment.DIRECTORY_MOVIES;
 
 final class RecordingSession implements RtspClientNew.Callback,
@@ -198,7 +175,7 @@ final class RecordingSession implements RtspClientNew.Callback,
 
             @Override
             public void onStart() {
-                startRecording1();
+                startRecording();
             }
 
             @Override
@@ -252,8 +229,6 @@ final class RecordingSession implements RtspClientNew.Callback,
         Timber.d("Display landscape: %s", isLandscape);
 
         // Get the best camera profile available. We assume MediaRecorder supports the highest.
-//        CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
-
         CamcorderProfile camcorderProfile = CamcorderProfile.get(CamcorderProfile.QUALITY_HIGH);
 
         int cameraWidth = camcorderProfile != null ? camcorderProfile.videoFrameWidth : -1;
@@ -267,7 +242,7 @@ final class RecordingSession implements RtspClientNew.Callback,
                 cameraWidth, cameraHeight, sizePercentage);
     }
 
-    private void startRecording1() {
+    private void startRecording() {
 
         projection = projectionManager.getMediaProjection(resultCode, data);
 
@@ -276,6 +251,10 @@ final class RecordingSession implements RtspClientNew.Callback,
         this.session.setmMediaProjection(projection);
 
         toggleStreaming();
+
+        running = true;
+
+        listener.onStart();
     }
 
     private void toggleStreaming() {
@@ -288,65 +267,12 @@ final class RecordingSession implements RtspClientNew.Callback,
         }
     }
 
-    private void startRecording() {
-        Timber.d("Starting screen recording...");
-
-        if (!outputRoot.mkdirs()) {
-            Timber.e("Unable to create output directory '%s'.", outputRoot.getAbsolutePath());
-            // We're probably about to crash, but at least the log will indicate as to why.
-        }
-
-        RecordingInfo recordingInfo = getRecordingInfo();
-        Timber.d("Recording: %s x %s @ %s", recordingInfo.width, recordingInfo.height,
-                recordingInfo.density);
-
-        recorder = new MediaRecorder();
-        recorder.setVideoSource(SURFACE);
-        recorder.setOutputFormat(MPEG_4);
-        recorder.setVideoFrameRate(30);
-        recorder.setVideoEncoder(H264);
-        recorder.setVideoSize(recordingInfo.width, recordingInfo.height);
-        recorder.setVideoEncodingBitRate(8 * 1000 * 1000);
-
-        String outputName = fileFormat.format(new Date());
-        outputFile = new File(outputRoot, outputName).getAbsolutePath();
-        Timber.i("Output file '%s'.", outputFile);
-        recorder.setOutputFile(outputFile);
-
-        try {
-            recorder.prepare();
-        } catch (IOException e) {
-            throw new RuntimeException("Unable to prepare MediaRecorder.", e);
-        }
-
-        projection = projectionManager.getMediaProjection(resultCode, data);
-
-        Surface surface = recorder.getSurface();
-        display =
-                projection.createVirtualDisplay(DISPLAY_NAME, recordingInfo.width, recordingInfo.height,
-                        recordingInfo.density, VIRTUAL_DISPLAY_FLAG_PRESENTATION, surface, null, null);
-
-        recorder.start();
-        running = true;
-        recordingStartNanos = System.nanoTime();
-        listener.onStart();
-
-        Timber.d("Screen recording started.");
-
-        analytics.send(new HitBuilders.EventBuilder() //
-                .setCategory(Analytics.CATEGORY_RECORDING)
-                .setAction(Analytics.ACTION_RECORDING_START)
-                .build());
-    }
-
     private void initRtspClient() {
         // Configures the SessionBuilder
         session = SessionBuilderNew.getInstance()
-//                .setProjection(mediaProjection)
+                .setContext(this.context)
                 .setAudioEncoder(SessionBuilder.AUDIO_NONE)
-                .setAudioQuality(new AudioQuality(8000, 16000))
                 .setVideoEncoder(SessionBuilder.VIDEO_H264)
-//                .setSurfaceView(mSurfaceView)
                 .setProjection(projection)
                 .setRecordingInfo(getRecordingInfo())
                 .setPreviewOrientation(0)
@@ -384,108 +310,18 @@ final class RecordingSession implements RtspClientNew.Callback,
         hideOverlay();
 
         // Stop the projection in order to flush everything to the recorder.
-        projection.stop();
+        session.stop();
 
         // Stop the recorder which writes the contents to the file.
-        recorder.stop();
-
-        long recordingStopNanos = System.nanoTime();
-
-        recorder.release();
-        display.release();
-
-        analytics.send(new HitBuilders.EventBuilder() //
-                .setCategory(Analytics.CATEGORY_RECORDING)
-                .setAction(Analytics.ACTION_RECORDING_STOP)
-                .build());
-        analytics.send(new HitBuilders.TimingBuilder() //
-                .setCategory(Analytics.CATEGORY_RECORDING)
-                .setValue(TimeUnit.NANOSECONDS.toMillis(recordingStopNanos - recordingStartNanos))
-                .setVariable(Analytics.VARIABLE_RECORDING_LENGTH)
-                .build());
+//        recorder.stop();
+        mClient.stopStream();
 
         listener.onStop();
 
         Timber.d("Screen recording stopped. Notifying media scanner of new video.");
 
-        MediaScannerConnection.scanFile(context, new String[]{outputFile}, null,
-                new MediaScannerConnection.OnScanCompletedListener() {
-                    @Override
-                    public void onScanCompleted(String path, final Uri uri) {
-                        Timber.d("Media scanner completed.");
-                        mainThread.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                showNotification(uri, null);
-                            }
-                        });
-                    }
-                });
     }
 
-    private void showNotification(final Uri uri, Bitmap bitmap) {
-        Intent viewIntent = new Intent(ACTION_VIEW, uri);
-        PendingIntent pendingViewIntent = PendingIntent.getActivity(context, 0, viewIntent, 0);
-
-        Intent shareIntent = new Intent(ACTION_SEND);
-        shareIntent.setType(MIME_TYPE);
-        shareIntent.putExtra(Intent.EXTRA_STREAM, uri);
-        shareIntent = Intent.createChooser(shareIntent, null);
-        PendingIntent pendingShareIntent = PendingIntent.getActivity(context, 0, shareIntent, 0);
-
-        Intent deleteIntent = new Intent(context, DeleteRecordingBroadcastReceiver.class);
-        deleteIntent.setData(uri);
-        PendingIntent pendingDeleteIntent = PendingIntent.getBroadcast(context, 0, deleteIntent, 0);
-
-        CharSequence title = context.getText(R.string.notification_captured_title);
-        CharSequence subtitle = context.getText(R.string.notification_captured_subtitle);
-        CharSequence share = context.getText(R.string.notification_captured_share);
-        CharSequence delete = context.getText(R.string.notification_captured_delete);
-        Notification.Builder builder = new Notification.Builder(context) //
-                .setContentTitle(title)
-                .setContentText(subtitle)
-                .setWhen(System.currentTimeMillis())
-                .setShowWhen(true)
-                .setSmallIcon(R.drawable.ic_videocam_white_24dp)
-                .setColor(context.getResources().getColor(R.color.primary_normal))
-                .setContentIntent(pendingViewIntent)
-                .setAutoCancel(true)
-                .addAction(R.drawable.ic_share_white_24dp, share, pendingShareIntent)
-                .addAction(R.drawable.ic_delete_white_24dp, delete, pendingDeleteIntent);
-
-        if (bitmap != null) {
-            builder.setLargeIcon(createSquareBitmap(bitmap))
-                    .setStyle(new Notification.BigPictureStyle() //
-                            .setBigContentTitle(title) //
-                            .setSummaryText(subtitle) //
-                            .bigPicture(bitmap));
-        }
-
-        notificationManager.notify(NOTIFICATION_ID, builder.build());
-
-        if (bitmap != null) {
-            listener.onEnd();
-            return;
-        }
-
-        new AsyncTask<Void, Void, Bitmap>() {
-            @Override
-            protected Bitmap doInBackground(@NonNull Void... none) {
-                MediaMetadataRetriever retriever = new MediaMetadataRetriever();
-                retriever.setDataSource(context, uri);
-                return retriever.getFrameAtTime();
-            }
-
-            @Override
-            protected void onPostExecute(@Nullable Bitmap bitmap) {
-                if (bitmap != null) {
-                    showNotification(uri, bitmap);
-                } else {
-                    listener.onEnd();
-                }
-            }
-        }.execute();
-    }
 
     static RecordingInfo calculateRecordingInfo(int displayWidth, int displayHeight,
                                                 int displayDensity, boolean isLandscapeDevice, int cameraWidth, int cameraHeight,
@@ -515,63 +351,10 @@ final class RecordingSession implements RtspClientNew.Callback,
         return new RecordingInfo(frameWidth, frameHeight, displayDensity);
     }
 
-//    static final class RecordingInfo {
-//        final int width;
-//        final int height;
-//        final int density;
-//
-//        RecordingInfo(int width, int height, int density) {
-//            this.width = width;
-//            this.height = height;
-//            this.density = density;
-//        }
-//    }
-
-    private static Bitmap createSquareBitmap(Bitmap bitmap) {
-        int x = 0;
-        int y = 0;
-        int width = bitmap.getWidth();
-        int height = bitmap.getHeight();
-        if (width > height) {
-            x = (width - height) / 2;
-            //noinspection SuspiciousNameCombination
-            width = height;
-        } else {
-            y = (height - width) / 2;
-            //noinspection SuspiciousNameCombination
-            height = width;
-        }
-        return Bitmap.createBitmap(bitmap, x, y, width, height, null, true);
-    }
-
     public void destroy() {
         if (running) {
             Timber.w("Destroyed while running!");
             stopRecording();
-        }
-    }
-
-    public static final class DeleteRecordingBroadcastReceiver extends BroadcastReceiver {
-
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            NotificationManager notificationManager =
-                    (NotificationManager) context.getSystemService(NOTIFICATION_SERVICE);
-            notificationManager.cancel(NOTIFICATION_ID);
-            final Uri uri = intent.getData();
-            final ContentResolver contentResolver = context.getContentResolver();
-            new AsyncTask<Void, Void, Void>() {
-                @Override
-                protected Void doInBackground(@NonNull Void... none) {
-                    int rowsDeleted = contentResolver.delete(uri, null, null);
-                    if (rowsDeleted == 1) {
-                        Timber.i("Deleted recording.");
-                    } else {
-                        Timber.e("Error deleting recording.");
-                    }
-                    return null;
-                }
-            }.execute();
         }
     }
 }
